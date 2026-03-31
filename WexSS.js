@@ -1,32 +1,34 @@
 // ================================================
-// WexSS - WexScan Ultra Professional Privacy Analyzer
-// v2.5 - Correção de erro 'permissions.some'
+// WexSS - WexScan Privacy Analyzer
+// v2.6 - Versão Segura e Estável
 // GitHub: WexScan
 // ================================================
 
 const CONFIG = {
-    version: "2.5",
-    appName: "WexSS"
+    version: "2.6"
 };
 
-// ====================== EXTRAÇÃO DE DADOS ======================
-function extract_domains(lines) {
-    const domains = new Set();
-    const appsMap = new Map();
+// ====================== FUNÇÕES PRINCIPAIS ======================
+function extractData(lines) {
+    var domains = new Set();
+    var appsMap = new Map();
 
     lines.forEach(function(line) {
         if (!line || !line.trim()) return;
         try {
             var entry = JSON.parse(line);
-            var appName = entry.bundleIdentifier || (entry.accessor && entry.accessor.identifier) || "Unknown App";
+            var appName = entry.bundleIdentifier || 
+                         (entry.accessor && entry.accessor.identifier) || 
+                         "Unknown App";
 
             if (!appsMap.has(appName)) {
                 appsMap.set(appName, { 
                     domains: new Set(), 
-                    permissions: new Set(), 
+                    permissions: [], 
                     count: 0 
                 });
             }
+
             var app = appsMap.get(appName);
             app.count++;
 
@@ -42,9 +44,11 @@ function extract_domains(lines) {
                     app.domains.add(host);
                 } catch(e) {}
             }
-            // Correção importante: verificar se permission existe
             if (entry.tccService || entry.permission) {
-                app.permissions.add(entry.tccService || entry.permission);
+                var perm = entry.tccService || entry.permission;
+                if (!app.permissions.includes(perm)) {
+                    app.permissions.push(perm);
+                }
             }
         } catch(e) {}
     });
@@ -57,207 +61,130 @@ function extract_domains(lines) {
             return {
                 appName: name,
                 domainsCount: data.domains.size,
-                permissions: Array.from(data.permissions),
+                permissions: data.permissions,
                 accessCount: data.count
             };
         })
     };
 }
 
-function sanitize_inputs(data) {
-    return data.filter(function(line) {
-        return line && typeof line === "string" && line.trim().length > 5;
-    });
-}
+// ====================== ANÁLISE ======================
+function analyzeRisk(rawData) {
+    var trackersCount = 0;
+    var trackerKeywords = ["doubleclick", "google-analytics", "facebook", "appsflyer", "adjust", "criteo"];
 
-function validate_input_data(lines) {
-    return lines.length > 5;
-}
-
-// ====================== ANÁLISE DE RISCO ======================
-function classify_risk_level(data) {
-    var score = 0;
-    if (data.trackersCount > 15) score += 40;
-    else if (data.trackersCount > 8) score += 25;
-
-    data.riskyApps.forEach(function(app) {
-        if (app.domainsCount > 15) score += 20;
-        // Correção: verificação segura de permissions
-        if (app.permissions && app.permissions.some && app.permissions.some(function(p) {
-            return /location|camera|microphone|contacts/i.test(p);
-        })) {
-            score += 15;
+    rawData.allDomains.forEach(function(domain) {
+        for (var i = 0; i < trackerKeywords.length; i++) {
+            if (domain.includes(trackerKeywords[i])) {
+                trackersCount++;
+                break;
+            }
         }
     });
 
-    var riskLevel = score >= 70 ? "CRITICAL" : score >= 45 ? "HIGH" : score >= 20 ? "MEDIUM" : "LOW";
-    return { riskScore: Math.min(score, 100), riskLevel: riskLevel };
-}
-
-function detect_anomalies(apps) {
-    return apps.filter(function(app) {
-        var hasLocation = false;
-        if (app.permissions && app.permissions.some) {
-            hasLocation = app.permissions.some(function(p) {
-                return /location/i.test(p);
+    var riskyApps = [];
+    rawData.apps.forEach(function(app) {
+        if (app.domainsCount > 10) {
+            riskyApps.push({
+                appName: app.appName,
+                domainsCount: app.domainsCount,
+                riskLevel: app.domainsCount > 15 ? "CRITICAL" : "HIGH"
             });
         }
-        return app.domainsCount > 20 || (hasLocation && app.accessCount > 40);
-    }).map(function(app) {
-        return app.appName + " (" + app.domainsCount + " domínios)";
-    });
-}
-
-function generate_recommendation(analysis) {
-    if (analysis.riskLevel === "CRITICAL") 
-        return "Recomendação urgente: Revise permissões de apps com muitos trackers e acesso sensível.";
-    if (analysis.riskLevel === "HIGH") 
-        return "Atenção: Considere limitar permissões de apps suspeitos.";
-    return "Nível de privacidade aceitável. Monitore trackers regularmente.";
-}
-
-// ====================== RELATÓRIOS ======================
-function generate_json_report(results) {
-    var fm = FileManager.local();
-    var dir = fm.joinPath(fm.documentsDirectory(), "WexSS_Reports");
-    fm.createDirectory(dir, true);
-    var ts = new Date().toISOString().slice(0,19).replace(/[:.]/g, "-");
-    fm.writeString(fm.joinPath(dir, "WexSS_Full_Report_" + ts + ".json"), JSON.stringify(results, null, 2));
-}
-
-function generate_markdown_report(analysis) {
-    var fm = FileManager.local();
-    var dir = fm.joinPath(fm.documentsDirectory(), "WexSS_Reports");
-    fm.createDirectory(dir, true);
-    var ts = new Date().toISOString().slice(0,19).replace(/[:.]/g, "-");
-
-    var md = "# WexSS - Relatório Ultra Profissional v" + CONFIG.version + "\n\n";
-    md += "**Data:** " + new Date().toLocaleString("pt-BR") + "\n";
-    md += "**Risco Geral:** " + analysis.riskLevel + " (Score: " + analysis.riskScore + ")\n\n";
-    md += "**Domínios únicos:** " + analysis.totalDomains + "\n";
-    md += "**Trackers detectados:** " + analysis.trackersCount + "\n\n";
-
-    md += "## Apps de Alto Risco\n";
-    analysis.riskyApps.forEach(function(app) {
-        md += "- **" + app.appName + "** → " + app.riskLevel + " (" + app.domainsCount + " domínios)\n";
     });
 
-    fm.writeString(fm.joinPath(dir, "WexSS_Summary_" + ts + ".md"), md);
+    var score = trackersCount > 15 ? 75 : trackersCount > 8 ? 50 : 25;
+    var riskLevel = score >= 70 ? "CRITICAL" : score >= 45 ? "HIGH" : "MEDIUM";
+
+    return {
+        totalDomains: rawData.allDomains.length,
+        trackersCount: trackersCount,
+        riskyApps: riskyApps,
+        riskScore: score,
+        riskLevel: riskLevel
+    };
 }
 
 // ====================== DASHBOARD ======================
-function showProfessionalDashboard(analysis) {
+function showDashboard(analysis) {
     var html = `
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WexSS Dashboard v${CONFIG.version}</title>
+    <title>WexSS v${CONFIG.version}</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #eee; margin: 0; padding: 20px; }
-        .card { background: #1f1f1f; border-radius: 18px; padding: 20px; margin: 15px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 14px; text-align: left; border-bottom: 1px solid #333; }
-        th { background: #2a2a2a; }
+        body { font-family: system-ui; background: #111; color: #ddd; padding: 20px; }
+        .card { background: #1f1f1f; padding: 20px; border-radius: 12px; margin: 15px 0; }
+        h1 { color: #0f0; text-align: center; }
     </style>
 </head>
 <body>
-    <h1 style="text-align:center;color:#00ff9d;">WexSS Dashboard v${CONFIG.version}</h1>
-    
+    <h1>WexSS v${CONFIG.version}</h1>
     <div class="card">
-        <h2>Risco Geral: ${analysis.riskLevel} (Score ${analysis.riskScore})</h2>
-        <p>Trackers: ${analysis.trackersCount} | Domínios: ${analysis.totalDomains}</p>
+        <h2>Risco: ${analysis.riskLevel} (Score: ${analysis.riskScore})</h2>
+        <p>Trackers encontrados: ${analysis.trackersCount}</p>
+        <p>Domínios únicos: ${analysis.totalDomains}</p>
     </div>
-
     <div class="card">
-        <h3>Apps de Alto Risco</h3>
-        <table>
-            <tr><th>App</th><th>Domínios</th><th>Risco</th></tr>
-            ${analysis.riskyApps.map(function(app) {
-                return "<tr><td>" + app.appName + "</td><td>" + app.domainsCount + "</td><td>" + app.riskLevel + "</td></tr>";
-            }).join("")}
-        </table>
+        <h3>Apps de Alto Risco (${analysis.riskyApps.length})</h3>
+        ${analysis.riskyApps.map(function(app) {
+            return "<p>• " + app.appName + " (" + app.domainsCount + " domínios) - " + app.riskLevel + "</p>";
+        }).join("")}
     </div>
 </body>
 </html>`;
 
-    var webview = new WebView();
-    webview.loadHTML(html);
-    webview.present();
+    var wv = new WebView();
+    wv.loadHTML(html);
+    wv.present();
 }
 
-// ====================== EXECUÇÃO PRINCIPAL ======================
-async function run_full_scan() {
+// ====================== EXECUÇÃO ======================
+async function main() {
     console.log("🚀 Iniciando WexSS v" + CONFIG.version);
 
     var filePath;
     try {
         filePath = await DocumentPicker.openFile();
     } catch (e) {
-        var a = new Alert();
-        a.title = "Seleção cancelada";
-        a.message = "Nenhum arquivo foi selecionado.";
-        a.addAction("OK");
-        await a.present();
+        var alert = new Alert();
+        alert.title = "Cancelado";
+        alert.message = "Nenhum arquivo selecionado.";
+        alert.addAction("OK");
+        await alert.present();
         return;
     }
 
     var fm = FileManager.local();
     var content = fm.readString(filePath);
-    var lines = sanitize_inputs(content.split("\n"));
+    var lines = content.split("\n").filter(function(l) { 
+        return l && l.trim().length > 10; 
+    });
 
-    if (!validate_input_data(lines)) {
+    if (lines.length < 5) {
         var a = new Alert();
-        a.title = "Arquivo inválido";
-        a.message = "O arquivo selecionado não parece ser um relatório de privacidade válido.";
+        a.title = "Erro";
+        a.message = "Arquivo inválido ou vazio.";
         a.addAction("OK");
         await a.present();
         return;
     }
 
-    var rawData = extract_domains(lines);
+    var rawData = extractData(lines);
+    var analysis = analyzeRisk(rawData);
 
-    var trackersCount = rawData.allDomains.filter(function(d) {
-        return ["doubleclick","google-analytics","facebook","appsflyer","adjust","criteo"].some(function(t) {
-            return d.includes(t);
-        });
-    }).length;
+    showDashboard(analysis);
 
-    var riskyApps = rawData.apps
-        .filter(function(app) { return app.domainsCount > 10; })
-        .map(function(app) {
-            return {
-                appName: app.appName,
-                domainsCount: app.domainsCount,
-                riskLevel: app.domainsCount > 15 ? "CRITICAL" : "HIGH"
-            };
-        });
-
-    var analysis = {
-        totalDomains: rawData.allDomains.length,
-        trackersCount: trackersCount,
-        riskyApps: riskyApps,
-        riskScore: 0,
-        riskLevel: "LOW"
-    };
-
-    var riskInfo = classify_risk_level(analysis);
-    analysis.riskScore = riskInfo.riskScore;
-    analysis.riskLevel = riskInfo.riskLevel;
-
-    generate_json_report(analysis);
-    generate_markdown_report(analysis);
-    showProfessionalDashboard(analysis);
-
-    console.log("✅ Análise concluída com sucesso.");
+    console.log("✅ Análise finalizada.");
 }
 
-run_full_scan().catch(function(err) {
-    console.error("Erro:", err);
+main().catch(function(err) {
+    console.error(err);
     var a = new Alert();
     a.title = "Erro no WexSS";
-    a.message = err.message || "Erro inesperado.";
+    a.message = "Ocorreu um erro.\n\n" + (err.message || err);
     a.addAction("OK");
     a.present();
 });
