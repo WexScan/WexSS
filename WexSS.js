@@ -1,9 +1,11 @@
 // ================================================
-// WexSS - WexScan
+// WexSS - WexScan Ultra Professional Privacy Analyzer
+// v2.5 - Correção de erro 'permissions.some'
+// GitHub: WexScan
 // ================================================
 
 const CONFIG = {
-    version: "2.4",
+    version: "2.5",
     appName: "WexSS"
 };
 
@@ -13,13 +15,17 @@ function extract_domains(lines) {
     const appsMap = new Map();
 
     lines.forEach(function(line) {
-        if (!line.trim()) return;
+        if (!line || !line.trim()) return;
         try {
             var entry = JSON.parse(line);
             var appName = entry.bundleIdentifier || (entry.accessor && entry.accessor.identifier) || "Unknown App";
 
             if (!appsMap.has(appName)) {
-                appsMap.set(appName, { domains: new Set(), permissions: new Set(), count: 0 });
+                appsMap.set(appName, { 
+                    domains: new Set(), 
+                    permissions: new Set(), 
+                    count: 0 
+                });
             }
             var app = appsMap.get(appName);
             app.count++;
@@ -36,6 +42,7 @@ function extract_domains(lines) {
                     app.domains.add(host);
                 } catch(e) {}
             }
+            // Correção importante: verificar se permission existe
             if (entry.tccService || entry.permission) {
                 app.permissions.add(entry.tccService || entry.permission);
             }
@@ -75,7 +82,12 @@ function classify_risk_level(data) {
 
     data.riskyApps.forEach(function(app) {
         if (app.domainsCount > 15) score += 20;
-        if (app.permissions.some(function(p) { return /location|camera|microphone|contacts/i.test(p); })) score += 15;
+        // Correção: verificação segura de permissions
+        if (app.permissions && app.permissions.some && app.permissions.some(function(p) {
+            return /location|camera|microphone|contacts/i.test(p);
+        })) {
+            score += 15;
+        }
     });
 
     var riskLevel = score >= 70 ? "CRITICAL" : score >= 45 ? "HIGH" : score >= 20 ? "MEDIUM" : "LOW";
@@ -84,8 +96,13 @@ function classify_risk_level(data) {
 
 function detect_anomalies(apps) {
     return apps.filter(function(app) {
-        return app.domainsCount > 20 || 
-               (app.permissions.some(function(p) { return /location/i.test(p); }) && app.accessCount > 40);
+        var hasLocation = false;
+        if (app.permissions && app.permissions.some) {
+            hasLocation = app.permissions.some(function(p) {
+                return /location/i.test(p);
+            });
+        }
+        return app.domainsCount > 20 || (hasLocation && app.accessCount > 40);
     }).map(function(app) {
         return app.appName + " (" + app.domainsCount + " domínios)";
     });
