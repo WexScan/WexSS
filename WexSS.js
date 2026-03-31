@@ -1,9 +1,11 @@
 // ================================================
-// Wex Scan - rainsnights on Discord
+// WexSS - WexScan Ultra Professional Privacy Analyzer
+// v2.3 - Correção de Escape + Código Limpo
+// GitHub: WexScan
 // ================================================
 
 const CONFIG = {
-    version: "2.2",
+    version: "2.3",
     appName: "WexSS"
 };
 
@@ -72,7 +74,7 @@ function validate_input_data(lines) {
     return lines.length > 5;
 }
 
-// ====================== ANÁLISE DE RISCO E ANOMALIAS ======================
+// ====================== ANÁLISE DE RISCO ======================
 function classify_risk_level(data) {
     let score = 0;
     if (data.trackersCount > 15) score += 40;
@@ -93,39 +95,27 @@ function is_medium_risk(data) { return data.riskLevel === "MEDIUM"; }
 function is_low_risk(data) { return data.riskLevel === "LOW"; }
 
 function detect_anomalies(apps) {
-    return apps.filter(app => app.domainsCount > 20 || 
-        (app.permissions.some(p => /location/i.test(p)) && app.accessCount > 40))
-        .map(app => `\( {app.appName} ( \){app.domainsCount} domínios)`);
+    return apps.filter(app => 
+        app.domainsCount > 20 || 
+        (app.permissions.some(p => /location/i.test(p)) && app.accessCount > 40)
+    ).map(app => app.appName + " (" + app.domainsCount + " domínios)");
 }
 
 function generate_recommendation(analysis) {
-    if (analysis.riskLevel === "CRITICAL") return "Recomendação: Revise permissões de apps com trackers e acesso excessivo a localização/câmera.";
-    if (analysis.riskLevel === "HIGH") return "Atenção moderada: Considere limitar permissões de apps suspeitos.";
-    return "Privacidade aceitável, mas monitore trackers regularmente.";
+    if (analysis.riskLevel === "CRITICAL") 
+        return "Recomendação urgente: Revise permissões de apps com muitos trackers e acesso a localização/câmera/microfone.";
+    if (analysis.riskLevel === "HIGH") 
+        return "Atenção: Considere limitar permissões de apps suspeitos.";
+    return "Nível de privacidade aceitável. Continue monitorando trackers periodicamente.";
 }
 
-// ====================== MÉTRICAS E RELATÓRIOS ======================
-function calculate_metrics(analysis) {
-    return {
-        totalDomains: analysis.totalDomains,
-        trackersFound: analysis.trackersCount,
-        highRiskApps: analysis.riskyApps.length,
-        successRate: 100,
-        falsePositiveRate: 0
-    };
-}
-
-function count_high_risk_proxies(analysis) {
-    return analysis.riskyApps.length;
-}
-
+// ====================== RELATÓRIOS E MÉTRICAS ======================
 function generate_json_report(results) {
     const fm = FileManager.local();
     const dir = fm.joinPath(fm.documentsDirectory(), "WexSS_Reports");
     fm.createDirectory(dir, true);
     const ts = new Date().toISOString().slice(0,19).replace(/[:.]/g, "-");
-    fm.writeString(fm.joinPath(dir, `WexSS_Full_Report_${ts}.json`), JSON.stringify(results, null, 2));
-    return `WexSS_Full_Report_${ts}.json`;
+    fm.writeString(fm.joinPath(dir, "WexSS_Full_Report_" + ts + ".json"), JSON.stringify(results, null, 2));
 }
 
 function generate_markdown_report(analysis) {
@@ -134,42 +124,25 @@ function generate_markdown_report(analysis) {
     fm.createDirectory(dir, true);
     const ts = new Date().toISOString().slice(0,19).replace(/[:.]/g, "-");
 
-    let md = `# WexSS - Relatório Ultra Profissional v${CONFIG.version}\n\n`;
-    md += `**Data:** ${new Date().toLocaleString('pt-BR')}\n`;
-    md += `**Risco Geral:** ${analysis.riskLevel} (Score: ${analysis.riskScore})\n\n`;
-    md += `**Domínios únicos:** ${analysis.totalDomains}\n`;
-    md += `**Trackers detectados:** ${analysis.trackersCount}\n\n`;
+    let md = "# WexSS - Relatório Ultra Profissional v" + CONFIG.version + "\n\n";
+    md += "**Data:** " + new Date().toLocaleString('pt-BR') + "\n";
+    md += "**Risco Geral:** " + analysis.riskLevel + " (Score: " + analysis.riskScore + ")\n\n";
+    md += "**Domínios únicos:** " + analysis.totalDomains + "\n";
+    md += "**Trackers detectados:** " + analysis.trackersCount + "\n\n";
 
-    md += `## Apps de Alto Risco\n`;
-    analysis.riskyApps.forEach(app => md += `- **${app.appName}** → \( {app.riskLevel} ( \){app.domainsCount} domínios)\n`);
+    md += "## Apps de Alto Risco\n";
+    analysis.riskyApps.forEach(app => {
+        md += "- **" + app.appName + "** → " + app.riskLevel + " (" + app.domainsCount + " domínios)\n";
+    });
 
     if (analysis.anomalies && analysis.anomalies.length > 0) {
-        md += `\n## Anomalias Detectadas\n`;
-        analysis.anomalies.forEach(a => md += `- ${a}\n`);
+        md += "\n## Anomalias Detectadas\n";
+        analysis.anomalies.forEach(a => md += "- " + a + "\n");
     }
 
-    md += `\n**Recomendação:** ${analysis.recommendation}`;
+    md += "\n**Recomendação:** " + analysis.recommendation;
 
-    fm.writeString(fm.joinPath(dir, `WexSS_Summary_${ts}.md`), md);
-}
-
-// ====================== ALERTAS E SEGURANÇA ======================
-function trigger_critical_alert(analysis) {
-    if (is_critical_risk(analysis)) {
-        let alert = new Alert();
-        alert.title = "⚠️ RISCO CRÍTICO DETECTADO";
-        alert.message = "Muitos trackers e acessos sensíveis foram encontrados.";
-        alert.addAction("OK");
-        alert.present();
-    }
-}
-
-function notify_on_scan_completion(analysis) {
-    console.log(`✅ Scan concluído | Risco: ${analysis.riskLevel} | Trackers: ${analysis.trackersCount}`);
-}
-
-function mask_sensitive_data(text) {
-    return text.replace(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, "[EMAIL_MASKED]");
+    fm.writeString(fm.joinPath(dir, "WexSS_Summary_" + ts + ".md"), md);
 }
 
 // ====================== DASHBOARD ======================
@@ -183,20 +156,19 @@ function showProfessionalDashboard(analysis) {
     <title>WexSS Dashboard v${CONFIG.version}</title>
     <style>
         body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #eee; margin: 0; padding: 20px; }
-        .card { background: #1f1f1f; border-radius: 18px; padding: 20px; margin: 15px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }
+        .card { background: #1f1f1f; border-radius: 18px; padding: 20px; margin: 15px 0; }
         .risk-critical { border-top: 6px solid #ff3b5c; }
         .risk-high { border-top: 6px solid #ff9500; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 14px; text-align: left; border-bottom: 1px solid #333; }
         th { background: #2a2a2a; }
-        .badge { padding: 6px 14px; border-radius: 9999px; font-size: 0.85em; }
     </style>
 </head>
 <body>
     <h1 style="text-align:center;color:#00ff9d;">WexSS Dashboard v${CONFIG.version}</h1>
     
     <div class="card risk-${analysis.riskLevel.toLowerCase()}">
-        <h2>Risco Geral: ${analysis.riskLevel} <span class="badge" style="background:#ff3b5c;">Score ${analysis.riskScore}</span></h2>
+        <h2>Risco Geral: ${analysis.riskLevel} <span style="color:#ff3b5c;">(Score ${analysis.riskScore})</span></h2>
         <p>Trackers: ${analysis.trackersCount} | Domínios: ${analysis.totalDomains}</p>
     </div>
 
@@ -208,7 +180,7 @@ function showProfessionalDashboard(analysis) {
                 <tr>
                     <td>${app.appName}</td>
                     <td>${app.domainsCount}</td>
-                    <td><span class="badge">${app.riskLevel}</span></td>
+                    <td>${app.riskLevel}</td>
                 </tr>
             `).join('')}
         </table>
@@ -234,7 +206,7 @@ function showProfessionalDashboard(analysis) {
 
 // ====================== EXECUÇÃO PRINCIPAL ======================
 async function run_full_scan() {
-    console.log(`🚀 Iniciando WexSS v${CONFIG.version} - Ultra Professional Mode`);
+    console.log(`🚀 Iniciando WexSS v${CONFIG.version}`);
 
     let filePath;
     try {
@@ -255,7 +227,7 @@ async function run_full_scan() {
     if (!validate_input_data(lines)) {
         let a = new Alert();
         a.title = "Arquivo inválido";
-        a.message = "O arquivo selecionado não é um relatório de privacidade válido.";
+        a.message = "O arquivo selecionado não parece ser um relatório de privacidade válido.";
         a.addAction("OK");
         await a.present();
         return;
@@ -294,19 +266,16 @@ async function run_full_scan() {
 
     generate_json_report(analysis);
     generate_markdown_report(analysis);
-
-    trigger_critical_alert(analysis);
     showProfessionalDashboard(analysis);
-    notify_on_scan_completion(analysis);
 
-    console.log("✅ Scan concluído com sucesso.");
+    console.log("✅ Análise concluída com sucesso.");
 }
 
 run_full_scan().catch(err => {
     console.error("Erro:", err);
     let a = new Alert();
     a.title = "Erro no WexSS";
-    a.message = err.message || "Erro inesperado durante a execução.";
+    a.message = err.message || "Erro inesperado.";
     a.addAction("OK");
     a.present();
 });
